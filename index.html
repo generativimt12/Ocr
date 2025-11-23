@@ -21,8 +21,8 @@
             width: 30px;
             height: 30px;
             animation: spin 1s linear infinite;
-            display: none;
-            margin: 0 auto;
+            display: inline-block;
+            vertical-align: middle;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
@@ -31,7 +31,7 @@
 
     <div class="max-w-3xl mx-auto bg-white rounded-lg shadow-xl p-8">
         <h1 class="text-3xl font-bold text-center mb-2 text-blue-600">פענוח כתבי יד באמצעות Gemini</h1>
-        <p class="text-center text-gray-500 mb-8">ממשק גמיש התומך בכל גרסאות המודל</p>
+        <p class="text-center text-gray-500 mb-8">מערכת חכמה הכוללת בדיקת תקינות מפתח</p>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
             
@@ -50,7 +50,6 @@
                 <select id="modelSelect" onchange="toggleCustomModel()" class="shadow border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline bg-white">
                     <option value="gemini-1.5-pro">Gemini 1.5 Pro (מומלץ לדיוק)</option>
                     <option value="gemini-1.5-flash">Gemini 1.5 Flash (מהיר מאוד)</option>
-                    <option value="gemini-1.5-pro-latest">Gemini 1.5 Pro Latest (הגרסה האחרונה)</option>
                     <option value="custom">אחר / Gemini 3.0 (הזנה ידנית)</option>
                 </select>
                 <input id="customModelInput" type="text" class="hidden mt-2 shadow appearance-none border border-blue-300 rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none" 
@@ -73,15 +72,19 @@
                 שורת דוגמה (משפר דיוק):
             </label>
             <input class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" 
-                   id="manualLine" type="text" placeholder="הקלד כאן משפט אחד מתוך הדף כדי ללמד את המודל את הכתב...">
+                   id="manualLine" type="text" placeholder="הקלד כאן משפט אחד מתוך הדף...">
         </div>
 
-        <button onclick="runOCR()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded focus:outline-none focus:shadow-outline transition transform hover:scale-105">
-            בצע פענוח
+        <button id="actionBtn" onclick="runOCR()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded focus:outline-none focus:shadow-outline transition transform hover:scale-105 flex justify-center items-center gap-2">
+            <span>בצע פענוח</span>
         </button>
 
         <div class="mt-8">
-            <div class="loader" id="loader"></div>
+            <div id="statusMessage" class="text-center text-blue-600 font-semibold mb-4 hidden">
+                <div class="loader ml-2"></div>
+                <span id="statusText">בודק...</span>
+            </div>
+
             <div id="resultContainer" class="hidden">
                 <div class="flex justify-between items-center mb-2">
                     <label class="block text-gray-700 text-sm font-bold">תוצאה:</label>
@@ -90,7 +93,8 @@
                 <textarea id="output" class="w-full h-64 p-4 border rounded bg-gray-50 text-right font-serif text-lg leading-relaxed" readonly></textarea>
                 <button onclick="copyText()" class="mt-2 text-sm text-blue-500 hover:text-blue-700 underline">העתק טקסט</button>
             </div>
-            <div id="errorMsg" class="hidden mt-4 p-4 bg-red-100 text-red-700 rounded border border-red-200 text-center"></div>
+            
+            <div id="errorMsg" class="hidden mt-4 p-4 bg-red-100 text-red-700 rounded border border-red-200 text-center font-bold"></div>
         </div>
     </div>
 
@@ -100,7 +104,8 @@
     </script>
 
     <script>
-        // Handle Dropdown change
+        // --- Helper Functions ---
+
         function toggleCustomModel() {
             const select = document.getElementById('modelSelect');
             const customInput = document.getElementById('customModelInput');
@@ -136,67 +141,117 @@
             };
         }
 
+        // --- Validation Logic ---
+        
+        // This function sends a tiny request to check if the key is valid
+        async function validateApiKey(apiKey) {
+            try {
+                const genAI = new window.GoogleGenerativeAI(apiKey);
+                // Use Flash for validation because it's fast and cheap
+                const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+                // Minimal token generation
+                await model.generateContent("Test"); 
+                return true;
+            } catch (error) {
+                console.warn("Validation failed:", error);
+                return false;
+            }
+        }
+
+        // --- Main Logic ---
+
         async function runOCR() {
             const apiKey = document.getElementById('apiKey').value;
-            
-            // Logic to choose model name
-            const selectVal = document.getElementById('modelSelect').value;
-            const customVal = document.getElementById('customModelInput').value;
-            let modelName = (selectVal === 'custom') ? customVal : selectVal;
-
-            // Default fallback if user chose custom but left empty
-            if (!modelName) modelName = "gemini-1.5-pro";
-
             const fileInput = document.getElementById('imageInput');
             const manualLine = document.getElementById('manualLine').value;
+            
             const output = document.getElementById('output');
-            const loader = document.getElementById('loader');
+            const statusMessage = document.getElementById('statusMessage');
+            const statusText = document.getElementById('statusText');
             const resultContainer = document.getElementById('resultContainer');
             const errorMsg = document.getElementById('errorMsg');
+            const actionBtn = document.getElementById('actionBtn');
             const modelUsedLabel = document.getElementById('modelUsedLabel');
 
+            // 1. Basic Input Validation
             if (!apiKey) { alert("אנא הכנס מפתח API"); return; }
             if (!fileInput.files[0]) { alert("אנא בחר תמונה"); return; }
 
+            // Reset UI
             resultContainer.classList.add('hidden');
             errorMsg.classList.add('hidden');
-            loader.style.display = 'block';
             output.value = '';
+            
+            // Disable button to prevent double clicks
+            actionBtn.disabled = true;
+            actionBtn.classList.add('opacity-50', 'cursor-not-allowed');
+
+            // Show Status: Checking Key
+            statusMessage.classList.remove('hidden');
+            statusText.innerText = "בודק תקינות מפתח API...";
 
             try {
+                // 2. Validate API Key (The new step)
+                const isValid = await validateApiKey(apiKey);
+                
+                if (!isValid) {
+                    throw new Error("מפתח ה-API אינו תקין. אנא בדוק שהעתקת אותו נכון ושאין רווחים מיותרים.");
+                }
+
+                // 3. Prepare Model
+                const selectVal = document.getElementById('modelSelect').value;
+                const customVal = document.getElementById('customModelInput').value;
+                let modelName = (selectVal === 'custom') ? customVal : selectVal;
+                if (!modelName) modelName = "gemini-1.5-pro";
+
+                // Update Status: Processing
+                statusText.innerText = "המפתח תקין. מעבד תמונה (זה עשוי לקחת כ-20 שניות)...";
+
                 const genAI = new window.GoogleGenerativeAI(apiKey);
                 const model = genAI.getGenerativeModel({ model: modelName });
-
                 const imagePart = await fileToGenerativePart(fileInput.files[0]);
 
+                // 4. Build Prompt
                 let promptText = `
                 תפקידך הוא לפענח כתב יד מתוך תמונה ולהמיר אותו לטקסט דיגיטלי מדויק.
                 הקפד על כל אות וסימן פיסוק. אל תוסיף פרשנות משלך.
                 `;
 
                 if (manualLine) {
-                    promptText += `\n
-                    שורת דוגמה לזיהוי סגנון הכתב (Few-Shot):
-                    "${manualLine}"
-                    `;
+                    promptText += `\nשורת דוגמה לזיהוי סגנון הכתב (Few-Shot): "${manualLine}"`;
                 }
-
                 promptText += `\nפלט את הטקסט המלא בלבד:`;
 
+                // 5. Generate
                 const result = await model.generateContent([promptText, imagePart]);
                 const response = await result.response;
                 const text = response.text();
 
+                // Success
                 output.value = text;
                 modelUsedLabel.innerText = "בוצע באמצעות: " + modelName;
                 resultContainer.classList.remove('hidden');
+                statusMessage.classList.add('hidden');
 
             } catch (error) {
                 console.error(error);
-                errorMsg.textContent = "שגיאה: " + (error.message || "ודא שהמפתח תקין ושהמודל שנבחר קיים.");
+                let msg = error.message;
+                // Make error friendly
+                if (msg.includes("403") || msg.includes("API key")) {
+                    msg = "שגיאת הרשאה: מפתח ה-API אינו תקין או חסום.";
+                } else if (msg.includes("400")) {
+                    msg = "שגיאת בקשה: ייתכן שהתמונה גדולה מדי או שהפורמט לא נתמך.";
+                } else if (msg.includes("Failed to fetch")) {
+                    msg = "שגיאת תקשורת: בדוק את החיבור לאינטרנט (נטפרי לפעמים חוסם בקשות מסוימות, ודא שהכתובת פתוחה).";
+                }
+                
+                errorMsg.innerText = msg;
                 errorMsg.classList.remove('hidden');
+                statusMessage.classList.add('hidden');
             } finally {
-                loader.style.display = 'none';
+                // Re-enable button
+                actionBtn.disabled = false;
+                actionBtn.classList.remove('opacity-50', 'cursor-not-allowed');
             }
         }
 
@@ -207,7 +262,7 @@
             alert("הטקסט הועתק ללוח");
         }
         
-        // Expose function globally
+        // Global exports
         window.toggleCustomModel = toggleCustomModel;
         window.runOCR = runOCR;
         window.copyText = copyText;
