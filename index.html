@@ -31,15 +31,31 @@
 
     <div class="max-w-3xl mx-auto bg-white rounded-lg shadow-xl p-8">
         <h1 class="text-3xl font-bold text-center mb-2 text-blue-600">פענוח כתבי יד באמצעות Gemini</h1>
-        <p class="text-center text-gray-500 mb-8">העלו תמונה, הזינו שורת דוגמה לשיפור הדיוק, וקבלו טקסט מפוענח.</p>
+        <p class="text-center text-gray-500 mb-8">ממשק גמיש התומך בכל גרסאות המודל</p>
 
-        <div class="mb-6">
-            <label class="block text-gray-700 text-sm font-bold mb-2" for="apiKey">
-                מפתח API של גוגל (Gemini API Key):
-            </label>
-            <input class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" 
-                   id="apiKey" type="password" placeholder="הדבק כאן את המפתח...">
-            <p class="text-xs text-gray-400 mt-1">המפתח נשמר מקומית בדפדפן שלך בלבד.</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2" for="apiKey">
+                    מפתח API (Google AI Studio):
+                </label>
+                <input class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" 
+                       id="apiKey" type="password" placeholder="הדבק כאן את המפתח...">
+            </div>
+
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2" for="modelSelect">
+                    בחר מודל:
+                </label>
+                <select id="modelSelect" onchange="toggleCustomModel()" class="shadow border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline bg-white">
+                    <option value="gemini-1.5-pro">Gemini 1.5 Pro (מומלץ לדיוק)</option>
+                    <option value="gemini-1.5-flash">Gemini 1.5 Flash (מהיר מאוד)</option>
+                    <option value="gemini-1.5-pro-latest">Gemini 1.5 Pro Latest (הגרסה האחרונה)</option>
+                    <option value="custom">אחר / Gemini 3.0 (הזנה ידנית)</option>
+                </select>
+                <input id="customModelInput" type="text" class="hidden mt-2 shadow appearance-none border border-blue-300 rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none" 
+                       placeholder="הכנס שם מודל (למשל: gemini-3.0-pro)">
+            </div>
         </div>
 
         <div class="mb-6 p-4 border-2 border-dashed border-gray-300 rounded-lg text-center hover:bg-gray-50 transition">
@@ -54,11 +70,10 @@
 
         <div class="mb-6">
             <label class="block text-gray-700 text-sm font-bold mb-2" for="manualLine">
-                שורת דוגמה (מומלץ מאוד):
+                שורת דוגמה (משפר דיוק):
             </label>
-            <p class="text-sm text-gray-600 mb-2">אנא פענחו ידנית שורה אחת או מספר מילים מתוך הדף כדי ללמד את המודל את סגנון הכתב.</p>
             <input class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" 
-                   id="manualLine" type="text" placeholder="לדוגמה: והיה כי יביאך...">
+                   id="manualLine" type="text" placeholder="הקלד כאן משפט אחד מתוך הדף כדי ללמד את המודל את הכתב...">
         </div>
 
         <button onclick="runOCR()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded focus:outline-none focus:shadow-outline transition transform hover:scale-105">
@@ -68,7 +83,10 @@
         <div class="mt-8">
             <div class="loader" id="loader"></div>
             <div id="resultContainer" class="hidden">
-                <label class="block text-gray-700 text-sm font-bold mb-2">תוצאה:</label>
+                <div class="flex justify-between items-center mb-2">
+                    <label class="block text-gray-700 text-sm font-bold">תוצאה:</label>
+                    <span id="modelUsedLabel" class="text-xs text-gray-400"></span>
+                </div>
                 <textarea id="output" class="w-full h-64 p-4 border rounded bg-gray-50 text-right font-serif text-lg leading-relaxed" readonly></textarea>
                 <button onclick="copyText()" class="mt-2 text-sm text-blue-500 hover:text-blue-700 underline">העתק טקסט</button>
             </div>
@@ -82,7 +100,18 @@
     </script>
 
     <script>
-        // Preview Image Logic
+        // Handle Dropdown change
+        function toggleCustomModel() {
+            const select = document.getElementById('modelSelect');
+            const customInput = document.getElementById('customModelInput');
+            if (select.value === 'custom') {
+                customInput.classList.remove('hidden');
+                customInput.focus();
+            } else {
+                customInput.classList.add('hidden');
+            }
+        }
+
         function previewImage(event) {
             const input = event.target;
             if (input.files && input.files[0]) {
@@ -96,7 +125,6 @@
             }
         }
 
-        // Convert File to Base64 for Gemini
         async function fileToGenerativePart(file) {
             const base64EncodedDataPromise = new Promise((resolve) => {
                 const reader = new FileReader();
@@ -108,21 +136,28 @@
             };
         }
 
-        // Main OCR Function
         async function runOCR() {
             const apiKey = document.getElementById('apiKey').value;
+            
+            // Logic to choose model name
+            const selectVal = document.getElementById('modelSelect').value;
+            const customVal = document.getElementById('customModelInput').value;
+            let modelName = (selectVal === 'custom') ? customVal : selectVal;
+
+            // Default fallback if user chose custom but left empty
+            if (!modelName) modelName = "gemini-1.5-pro";
+
             const fileInput = document.getElementById('imageInput');
             const manualLine = document.getElementById('manualLine').value;
             const output = document.getElementById('output');
             const loader = document.getElementById('loader');
             const resultContainer = document.getElementById('resultContainer');
             const errorMsg = document.getElementById('errorMsg');
+            const modelUsedLabel = document.getElementById('modelUsedLabel');
 
-            // Validations
             if (!apiKey) { alert("אנא הכנס מפתח API"); return; }
             if (!fileInput.files[0]) { alert("אנא בחר תמונה"); return; }
 
-            // UI Reset
             resultContainer.classList.add('hidden');
             errorMsg.classList.add('hidden');
             loader.style.display = 'block';
@@ -130,36 +165,35 @@
 
             try {
                 const genAI = new window.GoogleGenerativeAI(apiKey);
-                // שימוש במודל העדכני ביותר (ניתן לשנות כאן לגרסאות 3.0 כשיצאו רשמית)
-                const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+                const model = genAI.getGenerativeModel({ model: modelName });
 
                 const imagePart = await fileToGenerativePart(fileInput.files[0]);
 
-                // בניית הפרומפט - הוראות מדויקות למודל
                 let promptText = `
-                תפקידך הוא לפענח כתב יד עתיק או קשה לקריאה מתוך תמונה ולהמיר אותו לטקסט דיגיטלי מדויק.
-                הקפד על כל אות וסימן פיסוק. אל תוסיף פרשנות משלך, רק את הטקסט כפי שהוא מופיע.
+                תפקידך הוא לפענח כתב יד מתוך תמונה ולהמיר אותו לטקסט דיגיטלי מדויק.
+                הקפד על כל אות וסימן פיסוק. אל תוסיף פרשנות משלך.
                 `;
 
                 if (manualLine) {
                     promptText += `\n
-                    כדי לעזור לך לזהות את סגנון הכתב, הנה שורה אחת מתוך הטקסט שפוענחה ידנית על ידי המשתמש. השתמש בה כרמז (Few-Shot Learning) לזיהוי שאר האותיות בדף:
+                    שורת דוגמה לזיהוי סגנון הכתב (Few-Shot):
                     "${manualLine}"
                     `;
                 }
 
-                promptText += `\nאנא פלט את הטקסט המלא של הדף כעת:`;
+                promptText += `\nפלט את הטקסט המלא בלבד:`;
 
                 const result = await model.generateContent([promptText, imagePart]);
                 const response = await result.response;
                 const text = response.text();
 
                 output.value = text;
+                modelUsedLabel.innerText = "בוצע באמצעות: " + modelName;
                 resultContainer.classList.remove('hidden');
 
             } catch (error) {
                 console.error(error);
-                errorMsg.textContent = "שגיאה בפענוח: " + (error.message || "אנא ודא שה-API Key תקין ונסה שנית.");
+                errorMsg.textContent = "שגיאה: " + (error.message || "ודא שהמפתח תקין ושהמודל שנבחר קיים.");
                 errorMsg.classList.remove('hidden');
             } finally {
                 loader.style.display = 'none';
@@ -172,6 +206,12 @@
             document.execCommand("copy");
             alert("הטקסט הועתק ללוח");
         }
+        
+        // Expose function globally
+        window.toggleCustomModel = toggleCustomModel;
+        window.runOCR = runOCR;
+        window.copyText = copyText;
+        window.previewImage = previewImage;
     </script>
 </body>
 </html>
